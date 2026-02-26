@@ -221,9 +221,14 @@ func run(pass *analysis.Pass, patterns []sensitivePattern) {
 			// переписывать его текстом, чтобы не сломать исходное выражение.
 			canFix := canRewriteMessageExpr(msgExpr)
 
-			for _, literal := range literals {
-				if violated, fixed := violatesLowercaseRule(literal); violated {
-					pass.Report(buildDiagnostic(msgExpr, diagStartLower, literal, fixed, canFix))
+			for idx, literal := range literals {
+				// Проверку регистра делаем только по первому строковому куску,
+				// чтобы не получать ложные срабатывания на последующих частях
+				// выражений конкатенации.
+				if idx == 0 {
+					if violated, fixed := violatesLowercaseRule(literal); violated {
+						pass.Report(buildDiagnostic(msgExpr, diagStartLower, literal, fixed, canFix))
+					}
 				}
 
 				if containsNonEnglishLetters(literal) {
@@ -413,15 +418,11 @@ func violatesLowercaseRule(text string) (bool, string) {
 		return false, ""
 	}
 
-	if r >= 'a' && r <= 'z' {
-		return false, ""
-	}
-
 	if r >= 'A' && r <= 'Z' {
 		return true, text[:idx] + strings.ToLower(text[idx:idx+size]) + text[idx+size:]
 	}
 
-	return true, ""
+	return false, ""
 }
 
 func firstVisibleRune(text string) (int, rune, int, bool) {
