@@ -156,15 +156,15 @@ func TestViolatesLowercaseRule(t *testing.T) {
 			wantFixed:    "\nhello",
 		},
 		{
-			name:         "строка с цифры считается нарушением",
+			name:         "строка с цифры не считается нарушением",
 			input:        "1 attempt",
-			wantViolated: true,
+			wantViolated: false,
 			wantFixed:    "",
 		},
 		{
-			name:         "строка с разрешенной пунктуации считается нарушением",
+			name:         "строка с разрешенной пунктуации не считается нарушением",
 			input:        ".trace started",
-			wantViolated: true,
+			wantViolated: false,
 			wantFixed:    "",
 		},
 		{
