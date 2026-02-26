@@ -1,0 +1,45 @@
+name: linter-plugin-ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-and-build:
+    # Запускаем пайплайн на последней версии Ubuntu.
+    runs-on: ubuntu-latest
+
+    steps:
+      # Шаг 1: забираем исходный код репозитория в раннер.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Шаг 2: устанавливаем Go 1.22 и включаем кэш модулей/сборки.
+      - name: Setup Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      # Шаг 3: проверяем форматирование исходников.
+      # go fmt вносит изменения в файлы, поэтому дополнительно валим job,
+      # если после форматирования появился diff.
+      - name: Check formatting
+        run: |
+          go fmt ./...
+          git diff --exit-code
+
+      # Шаг 4: запускаем тесты анализатора с verbose-логом и race detector.
+      - name: Run tests
+        run: go test -v -race ./...
+
+      # Шаг 5: собираем .so-плагин для golangci-lint и проверяем,
+      # что buildmode=plugin компилируется без ошибок.
+      - name: Build plugin
+        run: |
+          mkdir -p build
+          go build -buildmode=plugin -o build/logmsglint.so ./plugin
