@@ -20,9 +20,10 @@
 ├── go.mod
 ├── pkg/analyzer/analyzer.go
 ├── pkg/analyzer/analyzer_test.go
+├── pkg/analyzer/testdata/src/a/main.go
+├── pkg/analyzer/testdata/src/go.uber.org/zap/zap.go
 ├── plugin/main.go
-├── README.md
-└── testdata/src/a/main.go
+└── README.md
 ```
 
 ## Сборка плагина для golangci-lint
