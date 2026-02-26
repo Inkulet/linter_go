@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
-	"go/constant"
 	"go/token"
 	"go/types"
 	"regexp"
@@ -208,29 +207,38 @@ func run(pass *analysis.Pass, patterns []sensitivePattern) {
 				return true
 			}
 
-			message, ok := constStringValue(pass, msgExpr)
-			if !ok {
+			// Важный момент: сообщение может быть не только строковым литералом,
+			// но и выражением конкатенации вида "prefix" + variable.
+			// Поэтому вместо попытки вычислить одно итоговое значение мы
+			// извлекаем все буквальные строковые куски из AST.
+			literals := extractAllStringLiterals(msgExpr)
+			if len(literals) == 0 {
 				return true
 			}
 
+			// Автофикс безопасен только для чистого строкового литерала.
+			// Если выражение сложнее (конкатенация и т.п.), не пытаемся
+			// переписывать его текстом, чтобы не сломать исходное выражение.
 			canFix := canRewriteMessageExpr(msgExpr)
 
-			if violated, fixed := violatesLowercaseRule(message); violated {
-				pass.Report(buildDiagnostic(msgExpr, diagStartLower, message, fixed, canFix))
-			}
+			for _, literal := range literals {
+				if violated, fixed := violatesLowercaseRule(literal); violated {
+					pass.Report(buildDiagnostic(msgExpr, diagStartLower, literal, fixed, canFix))
+				}
 
-			if containsNonEnglishLetters(message) {
-				pass.Report(buildDiagnostic(msgExpr, diagEnglishOnly, message, "", false))
-			}
+				if containsNonEnglishLetters(literal) {
+					pass.Report(buildDiagnostic(msgExpr, diagEnglishOnly, literal, "", false))
+				}
 
-			if containsSpecialSymbolsOrEmoji(message) {
-				fixed := stripSpecialSymbolsAndEmoji(message)
-				pass.Report(buildDiagnostic(msgExpr, diagNoSpecials, message, fixed, canFix))
-			}
+				if containsSpecialSymbolsOrEmoji(literal) {
+					fixed := stripSpecialSymbolsAndEmoji(literal)
+					pass.Report(buildDiagnostic(msgExpr, diagNoSpecials, literal, fixed, canFix))
+				}
 
-			if containsSensitiveData(message, patterns) {
-				fixed := redactSensitiveData(message, patterns)
-				pass.Report(buildDiagnostic(msgExpr, diagSensitive, message, fixed, canFix))
+				if containsSensitiveData(literal, patterns) {
+					fixed := redactSensitiveData(literal, patterns)
+					pass.Report(buildDiagnostic(msgExpr, diagSensitive, literal, fixed, canFix))
+				}
 			}
 
 			return true
@@ -320,29 +328,55 @@ func isStringExpr(pass *analysis.Pass, expr ast.Expr) bool {
 	return basic.Info()&types.IsString != 0
 }
 
-func constStringValue(pass *analysis.Pass, expr ast.Expr) (string, bool) {
-	expr = stripParens(expr)
-
-	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-		text, err := strconv.Unquote(lit.Value)
-		if err == nil {
-			return text, true
-		}
-	}
-
-	tv, ok := pass.TypesInfo.Types[expr]
-	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
-		return "", false
-	}
-
-	return constant.StringVal(tv.Value), true
-}
-
 func canRewriteMessageExpr(expr ast.Expr) bool {
 	lit, ok := stripParens(expr).(*ast.BasicLit)
 	return ok && lit.Kind == token.STRING
 }
 
+// extractAllStringLiterals рекурсивно достает все строковые литералы из выражения.
+// Мы осознанно поддерживаем только два сценария:
+// 1) прямой литерал "message";
+// 2) конкатенация через +, где каждая сторона может быть либо литералом,
+// либо еще одной конкатенацией.
+// Любые другие узлы AST (вызовы функций, идентификаторы, форматирование) игнорируем.
+func extractAllStringLiterals(expr ast.Expr) []string {
+	literals := make([]string, 0, 1)
+
+	var walk func(ast.Expr)
+	walk = func(node ast.Expr) {
+		if node == nil {
+			return
+		}
+
+		node = stripParens(node)
+		switch v := node.(type) {
+		case *ast.BasicLit:
+			if v.Kind != token.STRING {
+				return
+			}
+			text, err := strconv.Unquote(v.Value)
+			if err != nil {
+				// Некорректный литерал не должен ломать анализатор.
+				// Просто пропускаем узел и продолжаем обход.
+				return
+			}
+			literals = append(literals, text)
+		case *ast.BinaryExpr:
+			if v.Op != token.ADD {
+				return
+			}
+			walk(v.X)
+			walk(v.Y)
+		}
+	}
+
+	walk(expr)
+	return literals
+}
+
+// buildDiagnostic собирает диагностику и, при необходимости, SuggestedFix.
+// Важно, что SuggestedFix предлагается только для безопасного сценария, когда
+// можно заменить весь исходный аргумент целиком на новый строковый литерал.
 func buildDiagnostic(expr ast.Expr, message, currentText, fixedText string, allowFix bool) analysis.Diagnostic {
 	diagnostic := analysis.Diagnostic{
 		Pos:     expr.Pos(),
@@ -350,19 +384,24 @@ func buildDiagnostic(expr ast.Expr, message, currentText, fixedText string, allo
 		Message: message,
 	}
 
-	if allowFix && fixedText != "" && fixedText != currentText {
-		diagnostic.SuggestedFixes = []analysis.SuggestedFix{
-			{
-				Message: "исправить сообщение логирования",
-				TextEdits: []analysis.TextEdit{
-					{
-						Pos:     expr.Pos(),
-						End:     expr.End(),
-						NewText: []byte(strconv.Quote(fixedText)),
-					},
+	// Если правка не разрешена или нечего менять, возвращаем только предупреждение.
+	if !allowFix || fixedText == "" || fixedText == currentText {
+		return diagnostic
+	}
+
+	// Формируем правку как замену всего expression-узла на quoted-строку.
+	// Такой edit корректен только для *ast.BasicLit, что гарантируется вызывающей стороной.
+	diagnostic.SuggestedFixes = []analysis.SuggestedFix{
+		{
+			Message: "исправить сообщение логирования",
+			TextEdits: []analysis.TextEdit{
+				{
+					Pos:     expr.Pos(),
+					End:     expr.End(),
+					NewText: []byte(strconv.Quote(fixedText)),
 				},
 			},
-		}
+		},
 	}
 
 	return diagnostic
