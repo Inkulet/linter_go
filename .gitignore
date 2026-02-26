@@ -1,0 +1,24 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Build directories
+bin/
+build/
+
+# Coverage
+coverage.out
+*.coverprofile
+
+# Dependency directories
+vendor/
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
