@@ -11,6 +11,12 @@
 
 Линтер построен на `golang.org/x/tools/go/analysis`, поддерживает `SuggestedFixes` и кастомные паттерны чувствительных данных.
 
+## Требования
+
+1. Go `1.22+` (рекомендуется версия из `go.mod`).
+2. `golangci-lint` (локально установленный бинарник).
+3. Linux/macOS (сборка `.so` плагина через `-buildmode=plugin`).
+
 ## Структура проекта
 
 ```text
@@ -26,6 +32,22 @@
 └── README.md
 ```
 
+## Быстрый старт
+
+```bash
+git clone <https://github.com/Inkulet/linter_go>
+cd linter_go
+go mod tidy
+mkdir -p build
+go build -buildmode=plugin -o build/logmsglint.so ./plugin
+```
+
+После этого добавьте конфиг `golangci-lint` (пример ниже) и запустите:
+
+```bash
+golangci-lint run
+```
+
 ## Сборка плагина для golangci-lint
 
 ```bash
@@ -33,7 +55,9 @@ mkdir -p build
 go build -buildmode=plugin -o build/logmsglint.so ./plugin
 ```
 
-## Пример конфигурации golangci-lint
+## Конфигурация golangci-lint
+
+Создайте файл `.golangci.yml` в проекте, где хотите запускать линтер:
 
 ```yaml
 linters-settings:
@@ -52,8 +76,31 @@ linters:
     - logmsglint
 ```
 
+Если запускаете `golangci-lint` не из корня репозитория с плагином, укажите абсолютный путь в `path`.
+
+## Локальная проверка линтера
+
+```bash
+go test ./...
+golangci-lint run
+```
+
 ## Локальный запуск тестов
 
 ```bash
 go test ./...
 ```
+
+## Частые проблемы
+
+1. `plugin.Open(...): no such file or directory`
+   Причина: неверный `path` в `.golangci.yml`.
+   Решение: проверьте путь до `build/logmsglint.so` (лучше использовать абсолютный путь).
+
+2. `plugin was built with a different version of package ...`
+   Причина: плагин собран другой версией Go, чем та, которой запускается `golangci-lint`.
+   Решение: пересоберите плагин той же версией Go, которой запускаете линтер.
+
+3. `unknown linter: logmsglint`
+   Причина: кастомный линтер не включен или не прочитан конфиг.
+   Решение: проверьте блок `linters-settings.custom.logmsglint` и `linters.enable`.
