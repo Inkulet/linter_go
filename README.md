@@ -35,7 +35,7 @@
 ## Быстрый старт
 
 ```bash
-git clone <https://github.com/Inkulet/linter_go>
+git clone <[https://github.com/Inkulet/linter_go](https://github.com/Inkulet/linter_go.git)>
 cd linter_go
 go mod tidy
 mkdir -p build
